@@ -1,0 +1,46 @@
+LOCAL VALIDATION — NOT CLOUD EXECUTION
+2026-10-15T20:16:15.581863+00:00
+
+$ python -m unittest discover -s tests -v
+
+test_bigint_overflow_is_rejected (test_pipeline.DatasetTests.test_bigint_overflow_is_rejected) ... ok
+test_dangling_account_is_rejected (test_pipeline.DatasetTests.test_dangling_account_is_rejected) ... ok
+test_duplicate_ids_are_rejected (test_pipeline.DatasetTests.test_duplicate_ids_are_rejected) ... ok
+test_empty_dataset_is_rejected (test_pipeline.DatasetTests.test_empty_dataset_is_rejected) ... ok
+test_money_cannot_be_float (test_pipeline.DatasetTests.test_money_cannot_be_float) ... ok
+test_no_silent_overwrite (test_pipeline.DatasetTests.test_no_silent_overwrite) ... ok
+test_simulation_has_known_alerts_and_negative_case (test_pipeline.DatasetTests.test_simulation_has_known_alerts_and_negative_case) ... ok
+test_values_are_literal_and_existing_env_wins (test_pipeline.EnvironmentTests.test_values_are_literal_and_existing_env_wins) ... ok
+test_cards_are_isolated (test_pipeline.FraudRuleTests.test_cards_are_isolated) ... ok
+test_exactly_sixty_seconds_is_included (test_pipeline.FraudRuleTests.test_exactly_sixty_seconds_is_included) ... ok
+test_offline_oracle_sorts_event_time (test_pipeline.FraudRuleTests.test_offline_oracle_sorts_event_time) ... ok
+test_one_millisecond_outside_is_excluded (test_pipeline.FraudRuleTests.test_one_millisecond_outside_is_excluded) ... ok
+test_overlapping_triplets (test_pipeline.FraudRuleTests.test_overlapping_triplets) ... ok
+test_repeated_id_is_not_three_transactions (test_pipeline.FraudRuleTests.test_repeated_id_is_not_three_transactions) ... ok
+test_snapshot_counts_like_insert (test_pipeline.FraudRuleTests.test_snapshot_counts_like_insert) ... ok
+test_three_events_cross_minute_boundary (test_pipeline.FraudRuleTests.test_three_events_cross_minute_boundary) ... ok
+test_update_delete_tombstone_do_not_count (test_pipeline.FraudRuleTests.test_update_delete_tombstone_do_not_count) ... ok
+test_old_record_deserializes_with_new_default (test_pipeline.SchemaEvolutionTests.test_old_record_deserializes_with_new_default) ... ok
+test_optional_field_is_forward_and_backward_compatible (test_pipeline.SchemaEvolutionTests.test_optional_field_is_forward_and_backward_compatible) ... ok
+test_type_break_is_incompatible (test_pipeline.SchemaEvolutionTests.test_type_break_is_incompatible) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.070s
+
+OK
+exit_code=0
+
+$ python -m pip check
+No broken requirements found.
+
+exit_code=0
+
+$ terraform -chdir=infra fmt -check
+
+
+exit_code=0
+
+$ terraform -chdir=infra validate -no-color
+Success! The configuration is valid.
+
+exit_code=0

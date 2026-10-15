@@ -1,0 +1,38 @@
+{
+  "recorded_at_utc": "2026-10-15T20:11:52.503757+00:00",
+  "result": {
+    "synthetic": true,
+    "base_time_utc": "2026-01-01T00:00:00+00:00",
+    "accounts": 3,
+    "transactions": 11,
+    "expected_alerts": [
+      {
+        "alert_id": "card-boundary:card-boundary-3",
+        "transaction_ids": [
+          "card-boundary-1",
+          "card-boundary-2",
+          "card-boundary-3"
+        ],
+        "transaction_count": 3
+      },
+      {
+        "alert_id": "card-burst:card-burst-3",
+        "transaction_ids": [
+          "card-burst-1",
+          "card-burst-2",
+          "card-burst-3"
+        ],
+        "transaction_count": 3
+      },
+      {
+        "alert_id": "card-burst:card-burst-4",
+        "transaction_ids": [
+          "card-burst-2",
+          "card-burst-3",
+          "card-burst-4"
+        ],
+        "transaction_count": 3
+      }
+    ]
+  }
+}

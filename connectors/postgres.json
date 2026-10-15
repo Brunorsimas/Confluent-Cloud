@@ -1,0 +1,18 @@
+{
+  "name": "payments-postgres-cdc",
+  "connector.class": "PostgresCdcSourceV2",
+  "kafka.auth.mode": "SERVICE_ACCOUNT",
+  "database.sslmode": "require",
+  "topic.prefix": "payments",
+  "table.include.list": "public.accounts,public.transactions",
+  "publication.name": "payments_publication",
+  "publication.autocreate.mode": "disabled",
+  "slot.name": "payments_cdc",
+  "snapshot.mode": "initial",
+  "after.state.only": "false",
+  "output.data.format": "AVRO",
+  "output.key.format": "AVRO",
+  "tombstones.on.delete": "true",
+  "tasks.max": "1",
+  "errors.tolerance": "none"
+}

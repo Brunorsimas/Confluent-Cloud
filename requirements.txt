@@ -1,0 +1,4 @@
+-c requirements.lock
+confluent-kafka[avro]==2.16.0
+psycopg[binary]==3.3.6
+avro==1.12.2
