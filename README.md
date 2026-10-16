@@ -1,12 +1,11 @@
 # Pagamentos em streaming
 
-Pipeline de portfólio com **Postgres → CDC Debezium → Confluent Cloud → Flink SQL → consumidor Python**.
-O Flink enriquece transações com a conta e identifica três compras do mesmo cartão em até 60 segundos.
+Este projeto acompanha uma transação desde o Postgres até o alerta de possível fraude. O caminho passa por **CDC Debezium, Confluent Cloud e Flink SQL**, e termina em um consumidor Python. No Flink, a transação recebe os dados da conta e entra na regra: três compras do mesmo cartão em até 60 segundos geram um alerta.
 
-**Estado da entrega em 15/10/2026:** implementação e simulação local validadas. **Ainda não executado no Confluent Cloud**: não foram disponibilizadas credenciais nem um Postgres acessível ao conector. Os testes locais não comprovam implantação, CDC ou execução do SQL no serviço. A entrega ainda precisa das evidências de nuvem descritas abaixo antes de ser submetida como pipeline funcionando.
+**O que já rodou:** na validação de 15/10/2026, a simulação local, os 20 testes e a configuração Terraform passaram. **A execução no Confluent Cloud ainda está pendente**, porque faltam as credenciais e um Postgres acessível ao conector. Para fechar a entrega, ainda preciso executar as camadas na nuvem e registrar o CDC, os resultados do Flink e o custo. Os testes locais cobrem parte do código, mas essa etapa de ponta a ponta depende do serviço.
 
 Repositório: [Brunorsimas/Confluent-Cloud](https://github.com/Brunorsimas/Confluent-Cloud).
-O nome existente foi preservado; para cumprir literalmente o requisito de nome em minúsculas, renomeie para `confluent-cloud` em Settings → General e atualize o remote.
+O repositório está com o nome original. Como a atividade pede um nome em minúsculas, falta renomeá-lo para `confluent-cloud` em Settings → General e atualizar o remote.
 
 ## O caminho do dado
 
@@ -23,24 +22,21 @@ flowchart LR
     A --> U
 ```
 
-| Camada | Implementação | Escolha |
+| Camada | O que faz | Por que está aqui |
 | --- | --- | --- |
-| Fundação | `infra/`: ambiente isolado, Kafka Basic AWS us-east-2, Schema Registry Essentials, pool Flink de até 5 CFUs | Pequeno laboratório, configuração reproduzível e limite de capacidade explícito |
-| Contrato | Avro no CDC; compatibilidade `FULL_TRANSITIVE`; teste contra o subject real | Mensagens tipadas e evolução verificada nos dois sentidos |
-| Ingestão | `PostgresCdcSourceV2`, publication restrita, `REPLICA IDENTITY FULL` | CDC captura alterações confirmadas no WAL sem consultas batch recorrentes |
-| Processamento | `sql/flink/`: envelope bruto para compras, changelog de contas, joins e `MATCH_RECOGNIZE` | Updates de status não contam como novas compras; janela acompanha o evento |
-| Operação | Consumidor, verificador, teste negativo de ACL, métricas, custos e limpeza | Evidência por comando e encerramento explícito dos recursos |
+| Fundação | `infra/` cria um ambiente isolado, Kafka Basic na AWS us-east-2, Schema Registry Essentials e um pool Flink de até 5 CFUs | Mantém o laboratório pequeno, com a infraestrutura descrita em código e um limite de capacidade definido |
+| Contrato | Usa Avro no CDC e testa `FULL_TRANSITIVE` no subject real | Permite mudar o schema verificando se produtores e consumidores continuam compatíveis |
+| Ingestão | Liga o `PostgresCdcSourceV2` a uma publication restrita, com `REPLICA IDENTITY FULL` | Captura as alterações confirmadas no WAL sem precisar consultar o banco em lotes |
+| Processamento | `sql/flink/` trata o envelope das compras, acompanha as contas e aplica joins e `MATCH_RECOGNIZE` | Usa o horário da compra e evita contar um update de status como outra transação |
+| Operação | Reúne consumo, verificação de resultados, teste de ACL, métricas, custos e limpeza | Ajuda a conferir o que rodou e a remover os recursos ao terminar |
 
-O Terraform cria `payments-writer`, `payments-reader` e `payments-operator`.
-O writer escreve nos tópicos `payments.public.*` e nos tópicos de preview exigidos pelo conector.
-O reader lê apenas os dois tópicos de saída, com grupos `payments-reader-*`; não recebe permissão de escrita.
-O operator tem `EnvironmentAdmin` no ambiente exclusivo e executa a infraestrutura/SQL. Essa identidade administrativa não é a do consumidor.
-As credenciais do Kafka, Schema Registry e Flink são diferentes; os scripts leem os outputs em memória.
+O Terraform cria três identidades. A `payments-writer` escreve nos tópicos `payments.public.*` e nos tópicos de preview exigidos pelo conector. A `payments-reader` consome os dois tópicos de saída usando grupos `payments-reader-*`, sem permissão de escrita.
 
-## Validação já executada
+Já a `payments-operator` cuida da infraestrutura e do SQL, com `EnvironmentAdmin` no ambiente exclusivo do laboratório. Assim, o consumidor usa uma identidade própria, com acesso menor. Kafka, Schema Registry e Flink têm credenciais diferentes, que os scripts leem dos outputs em memória.
 
-Saídas completas: [evidence/local-validation.txt](evidence/local-validation.txt).
-Foram executados 20 testes de regra, contrato Avro, validação de CSV e leitura segura do `.env`, além da validação do provider Terraform 2.91.0.
+## O que já foi testado
+
+Os 20 testes cobrem a regra de fraude, a evolução do contrato Avro, a validação dos CSVs e a leitura do `.env` sem executar seu conteúdo. A configuração também passou na validação do Terraform com o provider Confluent 2.91.0. As saídas completas estão em [evidence/local-validation.txt](evidence/local-validation.txt).
 
 ```text
 $ python -m unittest discover -s tests -v
@@ -54,7 +50,7 @@ $ python -m pip check
 No broken requirements found.
 ```
 
-Saída real do gerador e da validação dos arquivos, executados localmente:
+A simulação local gerou 3 contas e 11 transações. Estes são os resultados do gerador e da validação dos arquivos:
 
 ```text
 $ python -m pipeline simulate
@@ -69,8 +65,9 @@ $ python -m pipeline validate-data
 {"accounts": 3, "transactions": 11, "valid": true}
 ```
 
-O trecho do gerador acima foi reduzido para leitura; o JSON integral está em
-[evidence/simulation.json](evidence/simulation.json). `expected_alerts` é a previsão do oráculo Python, não uma saída do Flink.
+Encurtei a saída do gerador para facilitar a leitura; o JSON completo está em [evidence/simulation.json](evidence/simulation.json). O campo `expected_alerts` vem do script de referência em Python e indica os alertas esperados quando o cenário passar pelo Flink.
+
+Para acompanhar o que falta na nuvem:
 
 | Evidência de nuvem | Situação atual | Comando que a produz |
 | --- | --- | --- |
@@ -81,11 +78,9 @@ O trecho do gerador acima foi reduzido para leitura; o JSON integral está em
 | Consumo, ACL e métricas | Não executado | `consume`, `acl-test`, `metrics` |
 | Cobrança real | Não disponível; nenhum recurso criado nesta execução | `costs` e exportação do Billing |
 
-Não há prints fictícios, IDs inventados de recursos nem resultados locais apresentados como execução em nuvem.
-
 ## Preparar a máquina
 
-Use Python 3.14, Git e Terraform 1.13.5. A CLI Confluent não é necessária: o projeto usa Terraform, APIs REST e o cliente Kafka oficial. Os comandos abaixo partem da raiz do repositório.
+Para reproduzir o projeto, use Python 3.14, Git e Terraform 1.13.5. Os scripts conversam com o Cloud pelas APIs REST e pelo cliente Kafka oficial, então você pode seguir sem instalar a CLI Confluent. Depois de clonar, execute os comandos a partir da raiz do repositório.
 
 ```powershell
 git clone https://github.com/Brunorsimas/Confluent-Cloud.git
@@ -97,40 +92,40 @@ Copy-Item .env.example .env
 python -m pipeline doctor
 ```
 
-No Linux/macOS, ative com `source .venv/bin/activate` e copie com `cp .env.example .env`.
-Se a ativação no PowerShell estiver bloqueada, use `.\.venv\Scripts\python.exe` no lugar de `python`.
-Se Terraform estiver fora do PATH, preencha `TERRAFORM` no `.env` com o caminho do executável.
-`requirements.lock` fixa as dependências transitivas; `.terraform.lock.hcl` fixa o provider.
+No Linux/macOS, a ativação é `source .venv/bin/activate` e a cópia do arquivo de configuração é `cp .env.example .env`. Se o PowerShell bloquear a ativação, dá para chamar `.\.venv\Scripts\python.exe` diretamente no lugar de `python`.
 
-Preencha `.env` localmente com a Cloud API key/secret de uma identidade autorizada a criar ambiente, contas de serviço e role bindings. Use uma conta Confluent com faturamento/créditos habilitados. Nunca cole a chave no README ou em uma issue.
+Se o Terraform estiver fora do PATH, informe o caminho do executável em `TERRAFORM`, no `.env`. As versões das dependências ficam fixadas em `requirements.lock`, e a do provider em `.terraform.lock.hcl`.
+
+Preencha o `.env` na sua máquina com a Cloud API key e o secret. Essa identidade precisa ter permissão para criar o ambiente, as contas de serviço e os role bindings, e a conta Confluent precisa estar com faturamento ou créditos habilitados. Mantenha as chaves no arquivo local, fora do README e das issues.
 
 ## Preparar o Postgres
 
-O conector gerenciado roda na nuvem. **Ele não alcança o `localhost` da sua máquina.**
-Use um Postgres de laboratório 17 com endpoint acessível ao Confluent Cloud, TLS e permissão de replicação lógica. Esse banco é um pré-requisito externo: o Terraform deste repositório não provisiona AWS RDS, rede ou certificados.
+O conector gerenciado roda na nuvem, então o endereço do banco precisa ser acessível de lá. **O `localhost` da sua máquina não atende a esse requisito.** Para o laboratório, use Postgres 17 com TLS e permissão de replicação lógica. O banco, a rede e os certificados precisam estar preparados antes: o Terraform deste repositório cuida dos recursos Confluent.
 
-Uma opção é criar no console AWS uma instância RDS PostgreSQL 17 em `us-east-2`, banco inicial `payments`, com credenciais próprias. Associe um parameter group PostgreSQL 17 com `rds.logical_replication=1` e reinicie a instância. No security group, libere TCP 5432 apenas para seu IP e os endereços de saída do conector daquela região; a rede/subnet também precisa permitir o acesso. Não use `0.0.0.0/0`. Consulte os [requisitos de rede dos conectores](https://docs.confluent.io/cloud/current/connectors/networking/index.html) e a [preparação de Postgres para CDC](https://docs.confluent.io/cloud/current/connectors/cc-postgresql-cdc-source-v2-debezium/cc-postgresql-cdc-source-v2-debezium.html).
+Uma opção é criar pelo console AWS uma instância RDS PostgreSQL 17 em `us-east-2`, com banco inicial `payments` e credenciais próprias. Associe um parameter group PostgreSQL 17 com `rds.logical_replication=1` e reinicie a instância.
 
-Em Postgres administrado por você, configure `wal_level=logical`, `max_replication_slots>=1`, `max_wal_senders>=1`, TLS e acesso no `pg_hba.conf`, e reinicie. O administrador informado em `PGUSER` precisa criar tabelas, publication e a role de replicação. `pg-init` reconhece RDS (`rds_replication`) e usa `REPLICATION` no Postgres comum.
+No security group, libere TCP 5432 apenas para seu IP e para os endereços de saída do conector naquela região. A rede e a subnet também precisam permitir a conexão; evite abrir o banco para `0.0.0.0/0`. Os detalhes estão nos [requisitos de rede dos conectores](https://docs.confluent.io/cloud/current/connectors/networking/index.html) e na [preparação de Postgres para CDC](https://docs.confluent.io/cloud/current/connectors/cc-postgresql-cdc-source-v2-debezium/cc-postgresql-cdc-source-v2-debezium.html).
 
-Configure `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSSLMODE=require`, `CDC_USER=payments_cdc` e uma senha própria em `CDC_PASSWORD` no `.env`.
+Se você administra o Postgres, configure `wal_level=logical`, `max_replication_slots>=1`, `max_wal_senders>=1`, TLS e o acesso no `pg_hba.conf`, e reinicie o servidor. O usuário informado em `PGUSER` precisa poder criar as tabelas, a publication e a role de replicação. O comando `pg-init` reconhece RDS e usa `rds_replication`; no Postgres comum, usa `REPLICATION`.
+
+Com o banco acessível, preencha no `.env`: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSSLMODE=require`, `CDC_USER=payments_cdc` e uma senha própria em `CDC_PASSWORD`. Depois, crie as tabelas e confira a configuração:
 
 ```powershell
 python -m pipeline pg-init
 python -m pipeline pg-health
 ```
 
-Para estudar apenas a camada de banco localmente, há um Compose opcional:
+Se quiser começar estudando o banco na sua máquina, há um Compose opcional:
 
 ```powershell
 docker compose up -d --wait
 ```
 
-Nesse modo, configure `POSTGRES_PASSWORD`, `PGHOST=127.0.0.1`, `PGUSER=payments_admin`, `PGPASSWORD` igual a `POSTGRES_PASSWORD` e `PGSSLMODE=disable`. Ele não habilita a execução Cloud: não há TLS público ou túnel configurado. Para o Cloud, volte às configurações do banco remoto.
+Nesse caso, configure `POSTGRES_PASSWORD`, `PGHOST=127.0.0.1`, `PGUSER=payments_admin`, `PGPASSWORD` igual a `POSTGRES_PASSWORD` e `PGSSLMODE=disable`. O Compose serve para os testes locais do banco. Para conectar o CDC no Cloud, volte às configurações do banco remoto: o Compose não prepara TLS público nem um túnel de acesso.
 
 ## Subir uma camada por vez
 
-**1. Fundação.** Reveja o plano antes do apply; esses comandos podem gerar cobrança real.
+**1. Criar a infraestrutura.** Confira o plano antes do apply, pois essa etapa cria recursos com cobrança na nuvem.
 
 ```powershell
 python -m pipeline tf init
@@ -140,10 +135,11 @@ python -m pipeline tf apply
 python -m pipeline foundation
 ```
 
-O conector fica desabilitado nessa primeira etapa. O apply normal mantém a confirmação do Terraform e não usa `-auto-approve`.
-O arquivo de state contém segredos mesmo com outputs marcados `sensitive`: não o publique, não anexe outputs `-json` brutos e não apague o state antes do destroy.
+Por enquanto, o conector fica desabilitado. O apply mantém a confirmação do Terraform, sem `-auto-approve`, para você revisar os recursos antes de criá-los.
 
-**2. Ingestão e dados sintéticos.** Comece com as tabelas vazias. Ative o conector antes da carga para que o cenário percorra o WAL como eventos `c`, na ordem de tempo.
+Guarde o state até terminar o laboratório: ele será necessário no destroy. Esse arquivo contém segredos mesmo quando os outputs estão marcados como `sensitive`, assim como os outputs brutos em `-json`. Ambos devem ficar fora do repositório público.
+
+**2. Ligar o CDC e carregar os dados.** Comece com as tabelas vazias e ative o conector antes da carga. Assim, as transações passam pelo WAL como eventos `c`, na ordem de tempo do cenário.
 
 ```powershell
 python -m pipeline tf plan -var=enable_connector=true
@@ -155,23 +151,23 @@ python -m pipeline load
 python -m pipeline cdc-probe
 ```
 
-`connector-status` precisa mostrar conector e tarefas `RUNNING`; se estiver provisionando, espere e repita.
-`simulate` cria 3 contas, 11 transações, cartões tokenizados, dinheiro em centavos e timestamps UTC. Não sobrescreve arquivos existentes. Se já executou a simulação local, reutilize os arquivos e pule esse comando. É possível escolher outra pasta com `--directory` nos três comandos de dados.
+Espere o `connector-status` mostrar o conector e as tarefas em `RUNNING` antes de continuar. Se ainda estiver provisionando, aguarde um pouco e consulte de novo.
 
-A carga valida a base inteira e insere em uma única transação, com as transações ordenadas por `occurred_at_ms`. Um ID já existente causa rollback, em vez de produzir updates silenciosos. Use um banco vazio para reproduzir os totais.
-O conector registra os schemas Avro reais automaticamente quando escreve os primeiros eventos.
+O `simulate` cria 3 contas e 11 transações, com cartões tokenizados, valores em centavos e timestamps UTC. Ele preserva arquivos existentes, então, se você já gerou a base localmente, basta reutilizá-la e pular esse comando. Para usar outra pasta, passe `--directory` nos três comandos de dados.
 
-`cdc-probe` cria uma conta temporária baseada numa conta sintética existente, confirma insert, update e delete em commits distintos e exige os eventos `c`, `u`, `d` e o tombstone no Kafka. Também confere a mudança de `risk_tier` em `before/after`; a linha temporária é removida ao terminar. Não cria compras extras.
+A carga confere a base inteira antes de gravar e faz a inserção em uma única transação, ordenada por `occurred_at_ms`. Se encontrar um ID que já está no banco, faz rollback. Por isso, use um banco vazio para reproduzir os totais do exemplo. Ao escrever os primeiros eventos, o conector registra os schemas Avro automaticamente.
 
-**3. Contrato.** Depois que o primeiro evento chegou:
+Para conferir o CDC, o `cdc-probe` cria uma conta temporária a partir de uma das contas sintéticas. Ele faz insert, update e delete em commits separados e procura os eventos `c`, `u`, `d` e o tombstone no Kafka. Também verifica se a mudança de `risk_tier` aparece em `before/after`. Ao terminar, remove a conta temporária, sem acrescentar compras ao cenário.
+
+**3. Testar a evolução do contrato.** Com o primeiro evento já no Kafka, execute:
 
 ```powershell
 python -m pipeline schema-test
 ```
 
-O comando lê `payments.public.transactions-value`, configura `FULL_TRANSITIVE`, adiciona `audit_tag` opcional com default `null`, verifica a compatibilidade e registra a versão. Depois testa uma troca incompatível de `op` de string para long e exige HTTP 409 ao tentar registrá-la. O schema não é uma cópia presumida do envelope: vem do próprio conector. Se houver HTTP 404, confira se a carga chegou ao Kafka antes de repetir.
+O comando busca o schema que o conector registrou em `payments.public.transactions-value` e configura `FULL_TRANSITIVE`. Primeiro, adiciona o campo opcional `audit_tag`, com default `null`, verifica a compatibilidade e registra a nova versão. Depois tenta mudar `op` de string para long: essa alteração deve ser recusada com HTTP 409. Se aparecer HTTP 404, confira se a carga já chegou ao Kafka e repita o teste.
 
-**4. Flink e consumo.**
+**4. Processar e consumir.** Agora é a vez dos scripts Flink e da conferência dos resultados:
 
 ```powershell
 python -m pipeline flink-deploy
@@ -180,17 +176,21 @@ python -m pipeline verify --seconds 180
 python -m pipeline consume --seconds 90
 ```
 
-O deploy envia os arquivos `01` a `08`, espera cada DDL completar e exige os dois INSERTs contínuos em `RUNNING`. Reexecuções aproveitam statements de mesmo nome e SQL; SQL alterado exige remoção deliberada do statement correspondente no console. Não remova DDLs concluídos para reaplicar tudo no mesmo catálogo: a coluna calculada já existirá. Para reproduzir integralmente, destrua e recrie o ambiente.
+O deploy envia os arquivos `01` a `08` em sequência. Ele espera cada DDL terminar e confere se os dois INSERTs contínuos chegaram a `RUNNING`. Se você rodar de novo com os mesmos nomes e SQL, os statements existentes serão reaproveitados.
 
-`verify` lê os dois tópicos desde o início com um grupo novo, materializa os upserts e exige exatamente 3 alertas e 11 transações enriquecidas, incluindo as trincas esperadas e nomes das contas. Um timeout sem dados é falha, nunca sucesso. O consumidor normal grava em `.runtime/consumed.jsonl`, força a persistência e só então confirma o offset. Se houver falha entre persistência e commit, pode repetir a linha; deduplique por tópico/partição/offset e aplique os resultados pela chave.
+Quando alterar um SQL, remova o statement correspondente no console antes de reenviá-lo. Tenha cuidado com os DDLs já concluídos: apagar o statement não desfaz a coluna calculada no catálogo, e reaplicar tudo pode falhar por ela já existir. Para repetir a montagem completa do zero, destrua e recrie o ambiente.
 
-Se o consumidor normal não mostrar nada em uma segunda execução, ele pode já ter confirmado os offsets. Use um grupo novo, por exemplo `--group payments-reader-review-2`, para reler. A API key do reader não acessa os tópicos de origem.
+O `verify` usa um grupo novo para ler os dois tópicos desde o início e aplicar os upserts. O resultado precisa ter exatamente 3 alertas e 11 transações enriquecidas, com as trincas esperadas e os nomes das contas. Se o tempo acabar sem esses dados, a verificação falha.
+
+Já o consumidor normal grava em `.runtime/consumed.jsonl`, força a persistência e depois confirma o offset. Uma falha entre a gravação e o commit pode repetir uma linha na próxima leitura. Para tratar isso, deduplique por tópico, partição e offset, e aplique os resultados pela chave.
+
+Se uma segunda execução do consumidor não mostrar mensagens, confira os offsets: esse grupo pode já ter consumido tudo. Para reler, escolha outro grupo, como `--group payments-reader-review-2`. A API key do reader dá acesso aos resultados; os tópicos de origem ficam restritos.
 
 ## Como a regra se comporta
 
-O tempo é `occurred_at_ms` da compra, não o horário de chegada ao broker. O watermark permite 5 segundos de desordem. A regra acompanha trincas consecutivas do mesmo cartão e exige diferença entre primeira e terceira de **no máximo 60 segundos**. Não usa janelas fixas por minuto, que perderiam compras na fronteira.
+A regra usa o horário da compra, registrado em `occurred_at_ms`. Ela procura três transações consecutivas do mesmo cartão cuja diferença entre a primeira e a terceira seja de **no máximo 60 segundos**. Isso inclui compras que cruzam a virada do minuto. O watermark permite 5 segundos de desordem na chegada dos eventos.
 
-`AFTER MATCH SKIP TO NEXT ROW` permite sobreposição: quatro compras próximas produzem dois alertas, identificados pela terceira compra de cada trinca. O `WITHIN 61s` limita o estado do padrão; a condição explícita de `C` limita a regra a 60s inclusivos, evitando expiração na borda exata.
+As trincas podem se sobrepor por causa de `AFTER MATCH SKIP TO NEXT ROW`: quatro compras próximas geram dois alertas, cada um identificado pela terceira compra da sua trinca. O `WITHIN 61s` limita por quanto tempo o Flink mantém o padrão em aberto. A condição de `C` continua exigindo no máximo 60 segundos; esse segundo de folga evita que o padrão expire justamente no limite inclusivo da regra.
 
 | Caso sintético | Tempos relativos | Resultado previsto |
 | --- | --- | --- |
@@ -199,13 +199,19 @@ O tempo é `occurred_at_ms` da compra, não o horário de chegada ao broker. O w
 | `card-outside` | 10s, 40s, 70,001s | 0 alertas |
 | `card-advance` | 180s | 0 alertas; faz o watermark avançar no replay finito |
 
-A leitura de transações usa Avro bruto para preservar o envelope e filtra `op IN ('c','r')`. Updates, deletes e tombstones continuam no tópico de auditoria, mas não contam como novas tentativas de compra e não cancelam alertas históricos. O campo de status na saída se chama `status_at_creation` por esse motivo.
+Na leitura das transações, o Avro bruto preserva o envelope do CDC. O filtro `op IN ('c','r')` deixa entrar na contagem os inserts e os registros do snapshot. Updates, deletes e tombstones seguem no tópico de auditoria, sem contar como novas compras ou cancelar alertas históricos. Por isso, o status que aparece na saída se chama `status_at_creation`.
 
-Contas usam o changelog Debezium completo. O enriquecimento é um **join com o estado atual da conta**, não uma consulta histórica da conta no instante da compra. Mudanças na conta atualizam os resultados por upsert; uma conta ainda ausente produz campos nulos e pode ser enriquecida depois. A chave estável do alerta permite ao consumidor substituir esse resultado sem tratá-lo como um alerta novo. A conta apresentada no alerta é a da terceira transação.
+Para as contas, o Flink acompanha o changelog Debezium completo e faz o enriquecimento com o **estado atual da conta**. Se uma conta mudar, seus dados nos resultados também são atualizados por upsert. Se ainda não tiver chegado, os campos ficam nulos e podem ser preenchidos depois.
 
-Limites do laboratório: o oráculo Python ordena uma entrada finita e não simula watermarks. Ele não prova o comportamento de eventos atrasados no Flink. Eventos além do watermark podem ficar fora da detecção. O conector usa sua entrega padrão; não há garantia end-to-end de ausência de duplicatas após falhas ou snapshots reiniciados. A comparação de IDs evita contar a mesma compra três vezes na mesma trinca, mas não substitui deduplicação durável da origem.
+Esse join não reconstrói a conta como ela era no instante da compra. No alerta, aparece a conta da terceira transação, e a chave estável permite que o consumidor atualize o resultado sem tratá-lo como um novo alerta.
 
-Os joins mantêm estado sem TTL para não perder o enriquecimento de contas pouco alteradas. Isso precisa de revisão de capacidade em um serviço permanente. A origem retém sete dias: refazer o processamento depois disso exige novo snapshot/backup. Os tópicos de saída são compactados; a retenção de sete dias configurada não é um prazo de expiração para compactação pura. Destruir o cluster remove esses tópicos.
+Há alguns limites a considerar. O script de referência em Python ordena uma base finita, sem simular watermarks. O comportamento dos eventos atrasados ainda precisa ser verificado no Flink, e eventos que chegam depois do watermark podem ficar fora da detecção.
+
+O conector usa a garantia de entrega padrão. Falhas ou snapshots reiniciados podem gerar duplicatas, então o projeto ainda não oferece uma garantia de ausência de duplicação de ponta a ponta. A comparação de IDs impede que uma trinca conte a mesma compra três vezes, mas uma execução permanente precisaria de deduplicação durável na origem.
+
+Os joins guardam estado sem TTL para continuar enriquecendo compras de contas que mudam pouco. Antes de manter esse pipeline rodando de forma permanente, é preciso revisar o crescimento desse estado e a capacidade disponível.
+
+Os tópicos de origem retêm sete dias de eventos; para reprocessar um período mais antigo, será necessário um novo snapshot ou backup. As saídas usam compactação pura, então os sete dias configurados não funcionam como prazo de expiração dos registros. Ao destruir o cluster, esses tópicos também são removidos.
 
 ## Operação e custo
 
@@ -217,14 +223,15 @@ python -m pipeline acl-test
 python -m pipeline metrics
 ```
 
-`acl-test` exige uma negação real do broker ao reader tentar ler a origem; erros de rede ou timeout não contam como sucesso. A leitura positiva é comprovada por `verify`/`consume`.
-`metrics` consulta bytes recebidos/enviados nos últimos 15 minutos, com margem de 5 minutos para atraso de publicação; exige Cloud API key com acesso de monitoração. Resposta vazia é registrada, mas o comando falha para não apresentá-la como prova de tráfego.
+O `acl-test` tenta ler a origem com a identidade do reader e espera que o broker negue o acesso. Um erro de rede ou timeout deixa o teste inconclusivo. A leitura dos tópicos permitidos é conferida por `verify`/`consume`.
 
-No console, acompanhe também consumer lag, utilização/limite de CFU, reinícios e tarefas do conector. No Postgres, `pg-health` mostra se o slot está ativo e o WAL retido. Tarefas FAILED, lag crescente ou WAL acumulado pedem investigação antes de nova carga. Um valor de bytes sozinho não comprova latência ou saúde de ponta a ponta.
+O comando `metrics` consulta os bytes recebidos e enviados em um intervalo de 15 minutos, deixando uma margem de 5 minutos para o atraso da telemetria. Ele precisa de uma Cloud API key com acesso de monitoração. Se a resposta vier vazia, ela fica registrada e o comando falha, pois ainda não há amostras para conferir o tráfego.
 
-**Custo observado nesta execução:** nenhum recurso Cloud foi provisionado; não existe cobrança Cloud medida deste pipeline. Isso não significa que rodar o projeto na nuvem seja gratuito. Não há estimativa numérica apresentada como fatura.
+Vale acompanhar no console o consumer lag, o uso e o limite de CFU, os reinícios e as tarefas do conector. No Postgres, o `pg-health` mostra se o slot está ativo e quanto WAL está retido. Se houver tarefas FAILED, lag crescendo ou WAL acumulado, investigue antes de fazer outra carga. As métricas de bytes ajudam a enxergar o movimento dos dados, mas precisam dessas outras medidas para avaliar a latência e a saúde do pipeline.
 
-Para medir uma execução, anote início/fim em UTC, salve o export do Billing filtrado pelos recursos do laboratório e inclua Kafka, armazenamento/tráfego, conector, CFU-h do Flink, governança quando cobrada e o Postgres/rede externo. Normalize as linhas cobradas para CSV com cabeçalho:
+**O custo da execução em nuvem ainda não foi medido**, já que nenhum recurso Cloud foi provisionado nesta validação. Quando o laboratório rodar no serviço, será preciso registrar a cobrança; não dá para assumir que ele será gratuito.
+
+Para fazer essa conta, anote o início e o fim da execução em UTC e salve a exportação do Billing, filtrada pelos recursos do laboratório. Inclua Kafka, armazenamento e tráfego, conector, CFU-h do Flink, governança quando houver cobrança e os custos externos de Postgres e rede. Organize as linhas cobradas em um CSV com este cabeçalho:
 
 ```csv
 service,quantity,unit,unit_price,currency
@@ -234,11 +241,13 @@ service,quantity,unit,unit_price,currency
 python -m pipeline costs evidence/private/billing-normalized.csv
 ```
 
-O script soma quantidade × tarifa com `Decimal`, rejeita tabela vazia ou mistura de moedas. Ele não consulta preços nem supõe créditos gratuitos. Guarde o export original e registre créditos/impostos separadamente: o cálculo representa os itens brutos fornecidos, não necessariamente o total líquido da fatura. O limite de CFU é de capacidade, não um teto monetário. Pausar um job não elimina custos de cluster, armazenamento e banco.
+O script usa `Decimal` para somar quantidade × tarifa e rejeita arquivos vazios ou com moedas diferentes. As tarifas precisam vir do CSV: ele não busca preços nem aplica créditos gratuitos. Guarde também a exportação original e registre créditos e impostos à parte, pois a soma representa os itens brutos informados e pode ser diferente do total líquido da fatura.
+
+O limite de CFU controla a capacidade do pool, mas não estabelece um teto de gasto. Mesmo com um job pausado, cluster, armazenamento e banco podem continuar gerando cobrança.
 
 ## Derrubar o laboratório
 
-Pare/remova os statements antes do pool; exclua o conector antes do slot. Os comandos abaixo removem os recursos Cloud deste state e preservam as tabelas do Postgres.
+Ao terminar, remova os statements antes do pool e o conector antes do slot de replicação. A sequência abaixo remove os recursos Cloud deste state e preserva as tabelas do Postgres:
 
 ```powershell
 python -m pipeline flink-delete
@@ -247,23 +256,26 @@ python -m pipeline pg-cleanup
 python -m pipeline tf destroy
 ```
 
-Revise o plano de destroy. Ele inclui ambiente, cluster, tópicos de origem/saída, schemas do ambiente, pool, identidades, bindings e chaves gerenciados pelo projeto. Preserve as evidências antes. Se `pg-cleanup` disser slot ativo, confirme que o conector foi realmente excluído e repita. Remova também o banco RDS e recursos externos criados para este laboratório no provedor, decidindo conscientemente se precisa de snapshot final. O Terraform Confluent não os remove.
+Salve as evidências antes e revise o plano de destroy: ele inclui o ambiente, o cluster, os tópicos de origem e saída, os schemas do ambiente, o pool, as identidades, os bindings e as chaves gerenciados pelo projeto. Se o `pg-cleanup` encontrar um slot ativo, confira se o conector já foi excluído e tente de novo.
 
-Para o banco local opcional, `docker compose down` mantém os dados. `docker compose down -v` apaga o volume do laboratório. Não use a segunda forma se precisar preservar os dados.
+O banco RDS e os demais recursos externos precisam ser removidos pelo provedor onde foram criados. Antes de excluir o banco, decida se precisa guardar um snapshot final. Essa parte fica fora do Terraform Confluent.
 
-## Evidências para publicar
+Se usou o banco local, `docker compose down` encerra os containers e mantém os dados. Use `docker compose down -v` apenas quando puder apagar também o volume do laboratório.
 
-Os comandos gravam saídas em `evidence/private/`, ignorada pelo Git. Revise cada arquivo antes de copiar resultados para uma pasta pública de evidências e atualizar a tabela de situação deste README. Nunca publique `.env`, state, planos Terraform, dumps de credenciais, senhas ou chaves. Os testes de unidade e o gerador estão separados dos comandos que realmente precisam do Cloud.
+## Antes de entregar
 
-Para repetir as verificações locais:
+As saídas dos comandos ficam em `evidence/private/`, uma pasta ignorada pelo Git. Depois de executar o pipeline na nuvem, revise esses arquivos, copie as evidências que podem ser públicas e atualize a tabela deste README. Deixe de fora `.env`, state, planos Terraform, dumps de credenciais, senhas e chaves.
+
+Você pode repetir as verificações locais com:
 
 ```powershell
 python -m pipeline tf init -backend=false
 python scripts/verify_local.py
 ```
 
-O workflow `.github/workflows/validate.yml` faz testes Python e validação Terraform sem segredos de nuvem. Não executa deploy.
-Antes da submissão final, ainda é necessário executar as cinco camadas no serviço, publicar suas evidências e custo real, conferir a reprodução completa e o nome em minúsculas. Envie o link da raiz do repositório público.
+O workflow `.github/workflows/validate.yml` também roda os testes Python e valida o Terraform, sem credenciais de nuvem ou deploy. O gerador e os testes locais podem ser usados antes de configurar o Cloud; os comandos de infraestrutura, CDC e processamento precisam desse acesso.
+
+Para fechar a entrega, ainda falta rodar as cinco camadas no serviço, publicar as evidências e o custo real, conferir se outra pessoa consegue seguir o passo a passo e ajustar o nome do repositório para minúsculas. Na submissão, use o link da raiz do repositório público.
 
 ## Referências técnicas
 
